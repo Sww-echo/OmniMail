@@ -1,6 +1,6 @@
 {
   "name": "omnimail",
-  "version": "0.3.5",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "A small, self-hosted webmail deployed as one Cloudflare Worker with Static Assets, D1, R2, Queues, and Resend.",
@@ -14,6 +14,21 @@
       },
       "ICLOUD_CREDENTIALS_KEY": {
         "description": "Optional. At least 32 random UTF-8 bytes for encrypting iCloud cookies and app-specific passwords."
+      },
+      "LINUX_DO_MAIL_CREDENTIALS_KEY": {
+        "description": "Optional. At least 32 random UTF-8 bytes for encrypting Linux DO Mail passwords or authentication tokens."
+      },
+      "GMAIL_CREDENTIALS_KEY": {
+        "description": "Optional. At least 32 random UTF-8 bytes for encrypting Gmail app passwords."
+      },
+      "QQ_MAIL_CREDENTIALS_KEY": {
+        "description": "Optional. At least 32 random UTF-8 bytes for encrypting QQ Mail authorization codes."
+      },
+      "NAVER_MAIL_CREDENTIALS_KEY": {
+        "description": "Optional. At least 32 random UTF-8 bytes for encrypting NAVER Mail app-specific passwords."
+      },
+      "MICROSOFT_CREDENTIALS_KEY": {
+        "description": "Optional. At least 32 random UTF-8 bytes for encrypting Microsoft OAuth tokens and optional combination passwords."
       }
     }
   },
@@ -31,8 +46,9 @@
     "predeploy": "npm run db:migrate",
     "deploy": "wrangler deploy",
     "check:lines": "node scripts/check-file-lines.mjs",
+    "lint": "oxlint src extension/src",
     "docs:api": "node scripts/generate-api-docs.mjs",
-    "check": "npm run check:lines && tsc --noEmit --pretty false && tsc -p email-worker/tsconfig.json --noEmit --pretty false && tsc -p email-worker/tsconfig.integration.json --noEmit --pretty false",
+    "check": "npm run check:lines && npm run lint && tsc --noEmit --pretty false && tsc -p email-worker/tsconfig.json --noEmit --pretty false && tsc -p email-worker/tsconfig.integration.json --noEmit --pretty false",
     "test": "vitest run",
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "test:extension": "node scripts/extension-smoke.mjs",
@@ -43,7 +59,9 @@
     "build:extension": "vite build --config vite.extension.config.ts"
   },
   "dependencies": {
+    "@gsap/react": "^2.1.2",
     "franc": "^6.2.0",
+    "gsap": "^3.15.0",
     "hono": "4.13.1",
     "lucide-react": "1.27.0",
     "parse5": "^8.0.1",
@@ -62,6 +80,7 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.4",
+    "oxlint": "^1.79.0",
     "typescript": "7.0.2",
     "vite": "8.1.5",
     "vitest": "4.1.10",

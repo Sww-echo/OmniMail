@@ -1,4 +1,4 @@
-<!-- 此文件由 npm run docs:api 自动生成，请修改 src/lib/apiCatalog*.ts 后重新生成。 -->
+<!-- 此文件由 npm run docs:api 自动生成，请修改 src/features/api-guide/model/apiCatalog*.ts 后重新生成。 -->
 
 # 管理员：设置、备份与版本
 
@@ -8,7 +8,7 @@
 
 > Global policies, storage, backup browsing, and system updates.
 
-本分类共 **16** 个端点。返回 [完整 API 索引](README.md) 或 [API 架构与安全说明](../API.md)。
+本分类共 **17** 个端点。返回 [完整 API 索引](README.md) 或 [API 架构与安全说明](../API.md)。
 
 <!-- endpoint:PATCH /api/admin/settings/registration catalog:3c1ee70c1d82 -->
 ## `PATCH /api/admin/settings/registration`
@@ -92,6 +92,38 @@ curl --request PATCH \
   --header "Content-Type: application/json" \
   --data '{
   "interval": 30
+}'
+```
+
+<!-- endpoint:PATCH /api/admin/settings/mail-workspaces catalog:b09315818b2e -->
+## `PATCH /api/admin/settings/mail-workspaces`
+
+**设置邮箱功能入口 / Configure mailbox workspace entries**
+
+控制各可选邮箱工作区是否显示在 OmniMail 导航中。
+
+> Control whether each optional mailbox workspace appears in OmniMail navigation.
+
+| 项目 | 内容 |
+| --- | --- |
+| 认证 | 管理员或主管理员 |
+| 请求 | JSON · iCloudWorkspaceEnabled, linuxDoMailWorkspaceEnabled, gmailWorkspaceEnabled, microsoftWorkspaceEnabled, qqMailWorkspaceEnabled, naverMailWorkspaceEnabled |
+| 成功响应 | 200 · all workspace switches |
+
+### cURL 示例
+
+```bash
+curl --request PATCH \
+  --url "https://mail.example.com/api/admin/settings/mail-workspaces" \
+  --header "Authorization: Bearer om_at_admin..." \
+  --header "Content-Type: application/json" \
+  --data '{
+  "iCloudWorkspaceEnabled": true,
+  "linuxDoMailWorkspaceEnabled": true,
+  "gmailWorkspaceEnabled": true,
+  "microsoftWorkspaceEnabled": true,
+  "qqMailWorkspaceEnabled": true,
+  "naverMailWorkspaceEnabled": false
 }'
 ```
 

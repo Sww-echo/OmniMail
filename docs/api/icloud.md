@@ -1,4 +1,4 @@
-<!-- 此文件由 npm run docs:api 自动生成，请修改 src/lib/apiCatalog*.ts 后重新生成。 -->
+<!-- 此文件由 npm run docs:api 自动生成，请修改 src/features/api-guide/model/apiCatalog*.ts 后重新生成。 -->
 
 # iCloud 隐藏邮箱
 
@@ -33,19 +33,19 @@ curl --request GET \
   --header "Authorization: Bearer om_at_..."
 ```
 
-<!-- endpoint:POST /api/icloud/accounts catalog:325790b70704 -->
+<!-- endpoint:POST /api/icloud/accounts catalog:a09af8fb6337 -->
 ## `POST /api/icloud/accounts`
 
 **连接 iCloud 账户 / Connect an iCloud account**
 
-保存加密 Cookie、选择区域并验证 Apple 账户和隐藏地址。
+通过应用专用密码连接主邮箱，或通过 Cookie 管理隐藏邮箱；两种方式可单独或同时配置。
 
-> Encrypt cookies, select the region, and validate the Apple account and aliases.
+> Connect primary mail with an app-specific password, manage aliases with cookies, or configure both.
 
 | 项目 | 内容 |
 | --- | --- |
 | 认证 | 登录用户；支持 Session Cookie 或 Access Token |
-| 请求 | JSON · name, cookies, host=icloud.com\|icloud.com.cn |
+| 请求 | JSON · name, cookies?, host=icloud.com\|icloud.com.cn, icloudEmail?, appPassword? |
 | 成功响应 | 201 · { account } |
 
 > 注意：Cookie 属于高敏感凭据，只应提交给自己的 OmniMail 实例。
@@ -310,19 +310,19 @@ curl --request DELETE \
 }'
 ```
 
-<!-- endpoint:GET /api/icloud/inbox catalog:90a6175fa229 -->
+<!-- endpoint:GET /api/icloud/inbox catalog:5b5583941f1f -->
 ## `GET /api/icloud/inbox`
 
 **读取 iCloud 最近来信 / List recent iCloud mail**
 
-使用应用专用密码通过 IMAP 按需读取最近邮件摘要。
+通过 IMAP 读取或搜索最近邮件摘要；Web 回退仅过滤当前摘要。
 
-> Use the app-specific password to read recent IMAP message summaries on demand.
+> Read or search recent IMAP message summaries; Web fallback filters current summaries only.
 
 | 项目 | 内容 |
 | --- | --- |
 | 认证 | 登录用户；支持 Session Cookie 或 Access Token |
-| 请求 | Query · accountId, alias?, limit=1..50?, days=0..365? |
+| 请求 | Query · accountId, alias?, q?, limit=1..50?, days=0..365? |
 | 成功响应 | 200 · { messages, method=imap\|web } |
 
 ### cURL 示例
@@ -333,20 +333,20 @@ curl --request GET \
   --header "Authorization: Bearer om_at_..."
 ```
 
-<!-- endpoint:GET /api/icloud/inbox/:uid catalog:0b92178762f1 -->
+<!-- endpoint:GET /api/icloud/inbox/:uid catalog:03d3ee97229b -->
 ## `GET /api/icloud/inbox/{uid}`
 
 **读取 iCloud 邮件正文 / Read an iCloud message**
 
-通过 IMAP UID 读取完整正文和附件元数据。
+通过 IMAP UID 读取完整正文，并将未读邮件同步标记为 Seen。
 
-> Read full content and attachment metadata by IMAP UID.
+> Read full content by IMAP UID and synchronize unread mail to Seen.
 
 | 项目 | 内容 |
 | --- | --- |
 | 认证 | 登录用户；支持 Session Cookie 或 Access Token |
 | 请求 | Path · uid; Query · accountId |
-| 成功响应 | 200 · { message } |
+| 成功响应 | 200 · { message: { …, isRead=true } } |
 
 ### cURL 示例
 

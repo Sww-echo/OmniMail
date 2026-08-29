@@ -59,6 +59,10 @@ Serverless Webmail：
 | Web 与桌面共用 API | 浏览器使用安全 Cookie，桌面客户端使用 Access / Refresh Token |
 | 网页悬浮邮箱 | 可选 Chrome 扩展用于生成邮箱、填入网页、收件与后台通知 |
 | iCloud 隐藏邮箱 | 可选接入 iCloud+ Hide My Email，管理别名并按需读取最近来信 |
+| Gmail 聚合收件箱 | 连接多个 Gmail / Workspace 账号，搜索聚合的 INBOX 元数据并在打开后同步已读 |
+| QQ 邮箱聚合收件箱 | 使用授权码连接多个个人 QQ 邮箱，有限同步 INBOX，并通过官方 SMTP 新建或回复邮件 |
+| NAVER 邮箱聚合收件箱 | 使用应用专用密码连接个人 NAVER 邮箱，有限同步 INBOX 并按需读取正文与附件 |
+| Yandex 邮箱聚合收件箱 | 使用 Mail 应用密码连接个人 Yandex 邮箱，有限同步 INBOX 并按需读取正文与附件 |
 | 管理可观测性 | 收件统计、来源分析、操作日志和部署自检 |
 
 ## 功能概览
@@ -95,9 +99,93 @@ Serverless Webmail：
 - 仅支持已开通 iCloud+ 且拥有 **Hide My Email** 权限的 Apple 账号；“仅网页访问”、未开通 iCloud+ 或没有隐藏邮箱权限的账号无法添加。
 - 添加账号时需要从对应的 `icloud.com` / `icloud.com.cn` 会话导入 Cookie。Cookie 过期、复制不完整或 Apple 拒绝权限时，添加会失败并在弹窗显示原因，不会退出 OmniMail 当前登录账号。
 - `ICLOUD_CREDENTIALS_KEY` 必须配置为至少 32 字节的 Secret；更换或恢复部署时请确认该 Secret 没有丢失，否则无法解密已保存凭据。
+- `LINUX_DO_MAIL_CREDENTIALS_KEY` 必须配置为至少 32 字节的 Secret；它用于加密 Linux DO Mail 密码或认证令牌。
 - 应用专用密码不是创建隐藏邮箱的必需项；只有需要通过 IMAP 按地址筛选或读取完整邮件正文时才需要配置，并且必须绑定当前 iCloud 邮箱。
 - iCloud 邮件和别名由 Worker 按需访问 Apple，不会同步进 OmniMail 收件箱；Apple 服务、订阅状态、区域限制和请求频率可能影响读取结果。
 - 不要把 Cookie 或应用专用密码提交到 Git、截图、工单或第三方聊天中；OmniMail 只在 Worker 内加密保存，浏览器不会再次读取原值。
+
+### Gmail 聚合收件箱
+
+- 每个 OmniMail 用户可连接多个自己有权访问的 Gmail 或 Google Workspace 账号。
+- 固定连接 `imap.gmail.com:993`。后台同步使用 `EXAMINE`、受控 `UID SEARCH` / `UID FETCH`；
+  用户打开正文后只允许执行固定的 `UID STORE ... +FLAGS.SILENT (\Seen)` 标记已读。
+- 不开放星标、归档、移动、删除或发送邮件等其他远端写操作。
+- D1 每个账号首次索引最近 100 封、最多保留最近 500 封 INBOX 元数据；正文、内嵌图片
+  和附件仅在用户打开时读取，不持久化到 D1 / R2。
+- 搜索框在当前账号或全部账号的 D1 索引中匹配发件人、收件人和主题，
+  不会为搜索额外下载或持久化 Gmail 正文。
+- 每 5 分钟由 Cron 错峰加入 Queue，同一账号通过短时租约避免并发同步；账号失败不会阻断
+  其他 Gmail 账号或 OmniMail 主邮箱。
+- 应用专用密码使用独立的 `GMAIL_CREDENTIALS_KEY` 进行 AES-GCM 加密，密文上下文绑定
+  用户、账号和字段；API 只返回 `hasAppPassword: true`。
+
+#### Gmail 使用注意事项
+
+- Google 官方优先推荐“使用 Google 账号登录”；OmniMail 为保持纯自托管部署而提供应用专用
+  密码模式。应用密码本身不具备细粒度 scope，远端操作边界由 OmniMail 的命令白名单保证。
+- 应用专用密码要求先开启两步验证，并且某些 Workspace、Advanced Protection 或仅安全密钥
+  两步验证账号无法创建。请勿填写 Google 账号主密码。
+- Google 账号主密码变化时，现有应用密码会被撤销。连接失效后需生成新密码并在账号管理中更新。
+- 删除 OmniMail 本地连接只会删除密文和索引；还必须前往
+  [Google 应用专用密码](https://myaccount.google.com/apppasswords)手动撤销对应密码。
+- 个人 Gmail 的 IMAP 默认开启；Workspace 是否允许第三方 IMAP 和应用密码仍由组织策略决定。
+
+### Microsoft 邮箱（仅已读写入）
+
+- 每个 OmniMail 用户可连接多个 Outlook.com、Hotmail、Live，或租户允许 IMAP 的
+  Microsoft 365 委托式账号；首期只支持 Azure Global。
+- OAuth2 是唯一认证路径：Worker 只向 Microsoft 官方 token endpoint 兑换 access token，随后
+  固定连接 `outlook.office365.com:993` 并使用 IMAP XOAUTH2。仅邮箱密码导入与 LOGIN 已停用。
+- 工作区可以聚合 INBOX，也可选择单账号的服务器文件夹，按 1–200 条读取元数据。全部范围可把
+  所有账号逐个加入同步 Queue，单账号范围可直接刷新当前文件夹；复制按钮在全部范围默认复制
+  第一个账号邮箱。正文、CID 图片与最大 5 MiB 附件仅在打开时通过 `BODY.PEEK[]` 读取，不长期保存。
+- Cron 约每 5 分钟将到期 INBOX 同步加入 Queue；这是定时收信，不是秒级推送。打开未读邮件会在
+  正文读取成功后同步 `\Seen`；除此之外不提供发信、删除、移动、归档或星标等远端写操作。
+- refresh token、短期 access token与经确认留存的四字段组合 password 使用独立
+  `MICROSOFT_CREDENTIALS_KEY` 进行 AES-GCM 加密；组合 password 不参与认证，API、日志与审计
+  记录也不会返回敏感凭据。
+
+详细部署、OAuth scope、导入格式与真实账号验收步骤见
+[Microsoft 邮箱设置指南](docs/MICROSOFT_SETUP.md)。
+
+### QQ 邮箱
+
+- 每个 OmniMail 用户可连接多个个人 `@qq.com` 收件账号；同一账号可添加经过 QQ SMTP 验证的
+  英文 `@qq.com`、`@foxmail.com` 与 `@vip.qq.com` 发信身份，腾讯企业邮箱不在支持范围。
+- 用户先在 QQ 邮箱中开启 IMAP/SMTP 服务并生成授权码，OmniMail 固定连接
+  `imap.qq.com:993` TLS；不接受 QQ 登录密码或自定义服务器。
+- 首次只索引最近 100 封、每账号最多保留 500 封 INBOX 元数据；正文与最大 5 MiB 附件按需
+  读取且不持久化。打开正文后仅尝试精确写入 `\\Seen`，不支持移动、删除、归档或星标。
+- 可从所选 QQ 账号向单个收件人新建或回复邮件；写信时可选择已验证身份，发件固定连接
+  `smtp.qq.com:465` 直接 TLS，并复用 Queue、幂等、限速和审计链路。
+- 授权码由独立的 `QQ_MAIL_CREDENTIALS_KEY` 使用 AES-GCM 加密，API 只返回
+  `hasAuthorizationCode: true`；单账号故障不会阻断其他账号或其他邮件工作区。
+
+部署和真实账号验收步骤见 [QQ 邮箱设置指南](docs/QQ_MAIL_SETUP.md)。
+
+### NAVER 邮箱（灰度、只读）
+
+- 仅支持个人 `@naver.com` 邮箱；用户需先开启 NAVER 两步验证和 IMAP/SMTP，并生成独立的
+  应用专用密码。OmniMail 固定连接 `imap.naver.com:993`，不接受登录主密码或自定义服务器。
+- 首次索引最近 100 封、每账号最多保留 500 封 INBOX 元数据，默认每 15 分钟加入同步 Queue；
+  正文与最大 5 MiB 附件按需读取且不持久化。
+- 打开正文后仅尝试精确写入 `\\Seen`；不支持发信、删除、移动、归档、星标或文件夹管理。
+- 应用专用密码由独立的 `NAVER_MAIL_CREDENTIALS_KEY` 使用 AES-GCM 加密，API 只返回
+  `hasAppPassword: true`。入口默认隐藏，生产开放前必须完成真实 Worker 登录和 24 小时稳定性观察。
+
+部署、灰度闸门和真实账号验收步骤见 [NAVER Mail 设置指南](docs/NAVER_MAIL_SETUP.md)。
+
+### Yandex 邮箱（灰度、只读）
+
+- 首版仅支持个人 `@yandex.com` 邮箱，使用 Yandex ID 中为“邮件”创建的应用密码。
+- OmniMail 固定连接 `imap.yandex.com:993`；登录名从邮箱本地部分派生，不接受主密码、自定义
+  服务器、企业自定义域名或共享邮箱技术用户名。
+- 首次索引最近 100 封、每账号最多保留 500 封 INBOX 元数据，默认每 15 分钟加入同步 Queue；
+  正文与最大 5 MiB 附件按需读取且不持久化。
+- 打开正文后仅尝试精确写入 `\Seen`；不支持发信、删除、移动、归档、星标或文件夹管理。
+- 应用密码由独立 `YANDEX_MAIL_CREDENTIALS_KEY` 使用 AES-GCM 加密；入口和部署开关默认关闭。
+
+部署和灰度验收步骤见 [Yandex Mail 设置指南](docs/YANDEX_MAIL_SETUP.md)。
 
 ### 多域名与用户
 
@@ -159,15 +247,27 @@ flowchart LR
 ```text
 .
 ├── src/                       # React Webmail
+│   ├── app/                   # 应用装配、导航与全局样式
+│   ├── features/              # 邮箱、消息、认证、管理等业务功能
+│   ├── shared/                # API、i18n、通用邮件与 UI 能力
+│   └── main.tsx               # Web 稳定入口
 ├── public/                    # Worker Static Assets 与安全响应头
 ├── email-worker/
-│   ├── src/                   # API、收件、队列与定时任务
+│   └── src/
+│       ├── app/               # Hono 装配、中间件与路由
+│       ├── features/          # Provider 与 Worker 业务功能
+│       ├── platform/          # D1、IMAP 与调度适配
+│       ├── shared/            # Worker 跨功能基础能力
+│       └── index.ts           # Worker 稳定入口
 ├── migrations/                # 可审阅的 D1 迁移
 ├── docs/API.md                # HTTP API 文档
+├── docs/ARCHITECTURE.md       # 代码目录和依赖边界约定
 ├── scripts/                   # 仓库质量检查脚本
 ├── wrangler.jsonc             # Worker、静态前端与 Cloudflare 资源配置
 └── .github/workflows/ci.yml   # GitHub Actions
 ```
+
+详细的文件归属和新增功能约定见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
 
 ## 快速部署
 
@@ -311,6 +411,15 @@ Worker 文件，剩余路径仍会匹配 `*` 并正常部署。Build watch paths
 | `SENDFLARE_DOMAIN_CONFIGS` | Secret | 按发件域名配置独立的 SendFlare API Key 与可选发件邮箱 |
 | `TOTP_ENCRYPTION_KEY` | Secret | 至少 32 个随机字符，用于加密管理员 TOTP 密钥 |
 | `ICLOUD_CREDENTIALS_KEY` | Secret | 至少 32 字节，用于加密 iCloud Cookie 与应用专用密码；不使用 iCloud 功能时可留空 |
+| `LINUX_DO_MAIL_CREDENTIALS_KEY` | Secret | 至少 32 字节，用于加密 Linux DO Mail 密码或认证令牌；不使用该功能时可留空 |
+| `GMAIL_CREDENTIALS_KEY` | Secret | 至少 32 字节，只用于加密 Gmail 应用专用密码；不使用该功能时可留空 |
+| `GMAIL_IMAP_ENABLED` | Text | 可选紧急功能开关；设为 `false` 时隐藏并停止 Gmail 接入，默认启用 |
+| `QQ_MAIL_CREDENTIALS_KEY` | Secret | 至少 32 字节，只用于加密 QQ 邮箱授权码；不使用该功能时可留空 |
+| `QQ_MAIL_IMAP_ENABLED` | Text | 可选紧急功能开关；设为 `false` 时隐藏并停止 QQ 邮箱接入，默认启用 |
+| `NAVER_MAIL_CREDENTIALS_KEY` | Secret | 至少 32 字节，只用于加密 NAVER 应用专用密码；不使用该功能时可留空 |
+| `NAVER_MAIL_IMAP_ENABLED` | Text | NAVER 功能开关；仅设为 `true` 时启用，完成真实账号验收前保持 `false` |
+| `MICROSOFT_CREDENTIALS_KEY` | Secret | 至少 32 字节，用于加密 Microsoft OAuth token 与可选组合 password；不使用该功能时可留空 |
+| `MICROSOFT_MAIL_ENABLED` | Text | 可选紧急功能开关；设为 `false` 时隐藏并停止 Microsoft 接入，默认启用 |
 | `CLOUDFLARE_ACCOUNT_ID` | Text | 可选备份所需的 Cloudflare Account ID |
 | `UPDATE_REPOSITORY` | Text | Release 来源仓库，默认 `mibgb65-cloud/OmniMail` |
 | `D1_DATABASE_ID` | Text | 可选备份所需的生产 D1 Database ID |
@@ -422,6 +531,45 @@ Builds 检测到分支更新后会自动构建、迁移并重新部署。
 将回调地址设置为 `https://你的域名/api/auth/linux-do/callback`，再配置上表两个变量。
 管理员随后可在 **系统设置 → 外部注册** 中选择“仅 Linux DO”。现有账号仍可使用
 邮箱密码登录；公开注册的新用户默认可在已启用域名中选择 1 个尚未占用的邮箱地址。
+
+若要启用独立的 **Linux DO 邮箱** 工作区，另行配置
+`LINUX_DO_MAIL_CREDENTIALS_KEY`。每个 OmniMail 用户可连接一个完整的 `@linux.do`
+邮箱用户名，并填写密码或认证令牌；推荐使用 Linux DO Mail 提供的可撤销专用令牌。
+工作区按用户操作读取 INBOX 最近 20 封邮件和单封正文，不执行后台同步。已连接账号可
+通过官方 SMTP 465 向单个收件人发信，`From` 固定为已验证的账号地址，并复用现有队列、
+幂等和限速保护；当前不支持附件或向服务器 Sent 文件夹追加副本。账号也可先验证再替换
+密码或认证令牌；验证失败时仍保留原凭据。
+
+若要启用独立的 **Gmail 聚合收件箱**，配置至少 32 字节的
+`GMAIL_CREDENTIALS_KEY`，部署并完成 D1 迁移。用户随后从左侧 Gmail 入口创建或粘贴一个
+Google 应用专用密码；连接验证成功后，Worker 会异步建立最近邮件索引。管理员可在
+**系统设置 → 邮箱功能入口** 中隐藏或恢复入口，隐藏不会删除已保存账号或索引。
+
+若要启用独立的 **Microsoft 邮箱**，配置至少 32 字节的
+`MICROSOFT_CREDENTIALS_KEY`，部署并应用 `0027_microsoft_imap.sql` 与
+`0028_microsoft_oauth_combination_password.sql`。用户使用 OAuth2 refresh token + Client ID
+连接；不再接受仅邮箱密码登录。四字段组合 password 经确认后独立加密留存，但不参与认证。
+Worker 只访问 Microsoft 官方 OAuth 与 IMAP 端点；批量导入文本会在浏览器中解析为结构化字段，
+不会发送给第三方服务。管理员同样可在 **系统设置 → 邮箱功能入口** 中隐藏入口。
+
+若要启用独立的 **QQ 邮箱聚合收件箱**，配置至少 32 字节的
+`QQ_MAIL_CREDENTIALS_KEY`，部署并应用到 `0030_qq_mail_smtp.sql`。用户需要先在 QQ 邮箱设置中
+开启 IMAP/SMTP 服务并生成授权码，再从左侧 QQ 邮箱入口连接个人 `@qq.com` 邮箱。
+升级到包含邮箱身份的版本时还会应用 `0031_qq_mail_identities.sql`；账号设置中可添加同一
+QQ 收件箱下的英文、Foxmail 或 VIP 地址，服务端会先验证 QQ SMTP 登录且不会发送测试邮件。
+管理员可在 **系统设置 → 邮箱功能入口** 中隐藏入口；隐藏不会删除账号、密文或索引。
+
+若要灰度启用独立的 **NAVER 邮箱聚合收件箱**，配置至少 32 字节的
+`NAVER_MAIL_CREDENTIALS_KEY` 并应用 `0033_naver_mail_imap.sql`。完成实际生产 Worker 登录和
+至少 24 小时低频稳定性观察前，保持 `NAVER_MAIL_IMAP_ENABLED=false`；验收通过后设为 `true`，
+再由管理员从 **系统设置 → 邮箱功能入口** 显式开放 NAVER 入口。用户只能连接个人
+`@naver.com` 邮箱，且必须使用 NAVER 应用专用密码。
+
+若要灰度启用独立的 **Yandex 邮箱聚合收件箱**，配置至少 32 字节的
+`YANDEX_MAIL_CREDENTIALS_KEY` 并应用 `0034_yandex_mail_imap.sql`。先保持
+`YANDEX_MAIL_IMAP_ENABLED=false` 完成实际 Worker 验证和至少 24 小时低频稳定性观察；验收后
+设为 `true`，再由管理员从 **系统设置 → 邮箱功能入口** 显式开放入口。首版仅接受个人
+`@yandex.com` 地址和 Yandex Mail 应用密码。
 
 ### 备份、保留与配额
 
@@ -582,6 +730,7 @@ npm run dev
 
 ```powershell
 npm run check:lines
+npm run lint
 npm run check
 npm test
 npm run test:worker
@@ -596,11 +745,12 @@ npx wrangler deploy --dry-run
 Web Store 素材时，运行 `npm run update:extension-store-assets`。
 
 最后一条命令只执行 Worker 打包验证，不会部署。CI 会在每次 Push 和 Pull Request
-中运行测试、类型检查、生产构建与 Wrangler dry-run。生产发布由已连接仓库的
+中运行测试、Hooks lint、类型检查、生产构建与 Wrangler dry-run。生产发布由已连接仓库的
 Cloudflare Workers Builds 自动执行。
 
-项目要求手写代码、测试和配置文件单文件不超过 600 行。自动生成的依赖锁文件和
-Wrangler 构建产物不计入限制。
+项目要求 Web 与扩展的 TypeScript 实现文件不超过 500 行，其他手写代码、测试和配置
+文件不超过 600 行。纯类型声明、翻译数据、自动生成的依赖锁文件和 Wrangler 构建产物
+不计入 500 行实现文件限制。
 
 ## 安全模型
 

@@ -12,6 +12,12 @@ const groupFiles = {
   messages: 'messages.md',
   drafts: 'drafts.md',
   icloud: 'icloud.md',
+  gmail: 'gmail.md',
+  microsoft: 'microsoft.md',
+  qqMail: 'qq-mail.md',
+  naverMail: 'naver-mail.md',
+  yandexMail: 'yandex-mail.md',
+  linuxdoMail: 'linux-do-mail.md',
   adminOperations: 'admin-operations.md',
   adminAccess: 'admin-access.md',
   adminSettings: 'admin-settings.md',
@@ -29,7 +35,7 @@ const authLabels = {
 
 function generatedNotice() {
   return [
-    '<!-- 此文件由 npm run docs:api 自动生成，请修改 src/lib/apiCatalog*.ts 后重新生成。 -->',
+    '<!-- 此文件由 npm run docs:api 自动生成，请修改 src/features/api-guide/model/apiCatalog*.ts 后重新生成。 -->',
     '',
   ]
 }
@@ -167,7 +173,7 @@ const vite = await createServer({
 })
 
 try {
-  const catalog = await vite.ssrLoadModule('/src/lib/apiCatalog.ts')
+  const catalog = await vite.ssrLoadModule('/src/features/api-guide/model/apiCatalog.ts')
   const helpers = {
     apiEndpointCurl: catalog.apiEndpointCurl,
     apiEndpointKey: catalog.apiEndpointKey,

@@ -7,7 +7,7 @@ OmniMail 网页端与桌面端共用 Core Worker 的 JSON API。浏览器默认�
 下面示例中的 API 地址使用 `https://mail.example.com`。生产环境中前端与 API
 由同一个 Worker 提供，API 路径统一位于 `/api/*`。
 
-> 逐端点参考：[`docs/api/README.md`](api/README.md)。该索引按 9 个业务分类展开当前
+> 逐端点参考：[`docs/api/README.md`](api/README.md)。该索引按 11 个业务分类展开当前
 > 全部 102 个接口，并提供认证要求、参数、响应、注意事项和可执行 cURL 示例。
 
 ## 公开配置与注册
@@ -631,6 +631,120 @@ GET /api/icloud/inbox/{uid}?accountId={id}
 时优先使用 iCloud IMAP；全部邮件视图可在 IMAP 失败时回退到 iCloud Web 摘要，按隐藏
 地址筛选和读取完整正文必须使用 IMAP。
 
+## Gmail 聚合收件箱
+
+配置至少 32 字节的 `GMAIL_CREDENTIALS_KEY` 后，每个用户可连接多个 Gmail 或
+Google Workspace 账号。应用专用密码使用 AES-GCM 加密，附加数据绑定用户、账号与字段；
+列表接口只返回 `hasAppPassword: true`。添加、验证与更新凭据按用户和来源 IP 限速，服务器、
+端口和 TLS 模式固定为 `imap.gmail.com:993`，请求不能把 Worker 当作任意 TCP 代理。
+
+账号接口：
+
+```http
+GET /api/gmail/accounts
+POST /api/gmail/accounts
+{ "name": "个人 Gmail", "email": "name@gmail.com", "appPassword": "xxxx xxxx xxxx xxxx" }
+
+PATCH /api/gmail/accounts/{id}
+{ "name": "工作 Gmail" }
+
+PUT /api/gmail/accounts/{id}/app-password
+{ "appPassword": "xxxx xxxx xxxx xxxx" }
+
+POST /api/gmail/accounts/{id}/verify
+POST /api/gmail/accounts/{id}/sync
+DELETE /api/gmail/accounts/{id}
+```
+
+删除接口只清除本地密文和元数据索引，并返回 `remoteRevocationRequired: true`；用户仍需在
+Google 账号中手动撤销对应应用密码。更新密码会先验证新值，失败时保留原密文。
+
+邮件接口：
+
+```http
+GET /api/gmail/messages?accountId={id}&q={query}&limit=30&cursor={cursor}
+GET /api/gmail/accounts/{accountId}/messages/{messageId}
+GET /api/gmail/accounts/{accountId}/messages/{messageId}/attachments/{partId}
+```
+
+列表读取 D1 中最多每账号 500 封 INBOX 元数据，`q` 可搜索发件人、收件人和主题；
+正文通过 `BODY.PEEK[]` 按需读取，成功后以
+固定的 `UID STORE ... +FLAGS.SILENT (\\Seen)` 标记已读；正文和附件均不持久化。所有详情查询
+先以当前用户 ID、账号 ID 和本地消息 ID 联合验证归属，避免跨用户资源存在性泄露。同步由
+5 分钟 Cron 错峰加入 Queue，并使用账号租约、
+`UIDVALIDITY`、UID 与 Gmail 扩展 ID 保持最终一致。
+
+## Microsoft 邮箱（仅已读写入）
+
+配置至少 32 字节的 `MICROSOFT_CREDENTIALS_KEY` 后，用户可导入结构化 OAuth2 凭据。
+四字段组合 password 经确认后独立加密留存，但不参与认证。OAuth2 只访问 Microsoft Global
+官方 token endpoint；IMAP 固定为 `outlook.office365.com:993` TLS。请求不能提供任意 URL、
+主机或端口，也不会在 OAuth2 失败后自动改用密码。
+
+账号与文件夹接口：
+
+```http
+GET /api/microsoft/accounts
+POST /api/microsoft/accounts/import
+PATCH /api/microsoft/accounts/{id}
+PUT /api/microsoft/accounts/{id}/credential
+DELETE /api/microsoft/accounts/{id}
+POST /api/microsoft/accounts/{id}/verify
+POST /api/microsoft/accounts/{id}/sync
+GET /api/microsoft/accounts/{id}/folders?refresh=1
+```
+
+批量导入每次接受 1–25 个已解析对象，每项独立返回 `accepted`、`duplicate` 或稳定错误。查询接口
+仅返回脱敏 Client ID、认证模式与状态，不返回 refresh token、access token、密码或密文。
+
+邮件接口：
+
+```http
+GET /api/microsoft/messages?accountId={id}&folder=INBOX&q={query}&limit=50&cursor={cursor}
+GET /api/microsoft/accounts/{accountId}/messages/{messageId}
+GET /api/microsoft/accounts/{accountId}/messages/{messageId}/attachments/{partId}
+```
+
+元数据身份绑定账号、folder、UIDVALIDITY 与 UID。正文和最大 5 MiB 附件通过 `BODY.PEEK[]`
+按需读取且不持久化；正文读取成功后，未读邮件会通过固定的
+`UID STORE ... +FLAGS.SILENT (\\Seen)` 同步已读状态。写入失败不会阻断正文响应，也不会错误更新
+本地已读索引。后台约每 5 分钟只读同步 INBOX；全部账号同步由浏览器逐账号调用单账号 sync
+端点，单账号当前文件夹可通过 messages 的 `refresh=1` 受限刷新。这是轮询而非秒级推送。
+除精确标记已读外，不提供移动、删除、归档、星标或其他远端写入。部署与真实账号验收见
+[`MICROSOFT_SETUP.md`](MICROSOFT_SETUP.md)，完整字段见 [`api/microsoft.md`](api/microsoft.md)。
+
+## QQ 邮箱
+
+配置至少 32 字节的 `QQ_MAIL_CREDENTIALS_KEY` 后，个人 `@qq.com` 用户可使用 QQ 邮箱授权码
+连接固定的 `imap.qq.com:993` TLS 端点。请求不能提供任意 IMAP 主机、端口或命令；授权码在
+远端验证成功后才以 QQ 专用密钥加密保存，API 只返回 `hasAuthorizationCode: true`。
+
+```http
+GET /api/qq-mail/accounts
+POST /api/qq-mail/accounts
+PATCH /api/qq-mail/accounts/{id}
+PUT /api/qq-mail/accounts/{id}/authorization-code
+DELETE /api/qq-mail/accounts/{id}
+POST /api/qq-mail/accounts/{id}/verify
+POST /api/qq-mail/accounts/{id}/sync
+POST /api/qq-mail/accounts/{id}/messages
+GET /api/qq-mail/messages?accountId={id}&q={query}&limit=30&cursor={cursor}
+GET /api/qq-mail/accounts/{accountId}/messages/{messageId}
+GET /api/qq-mail/accounts/{accountId}/messages/{messageId}/attachments/{partId}
+```
+
+列表只搜索 D1 中的发件人、收件人、抄送和主题元数据。正文和最大 5 MiB 附件按需读取且不
+持久化；正文成功返回后，系统使用独立 IMAP 会话尝试精确写入 `\\Seen`。已读写入失败不会把
+已成功读取的正文改成错误响应。
+
+后台约每 5 分钟只读同步 INBOX；浏览器的“同步全部”会对可用账号逐个请求同步。同步是轮询，
+不是秒级推送。发件固定连接 `smtp.qq.com:465` 直接 TLS，只接受单收件人；服务端强制发件地址，
+回复时从本地索引推导收件人和线程头。任务复用现有 Queue、幂等、用户限速和审计；`DATA` 后
+连接结果不确定时禁止自动重发。首轮不支持附件、CC/BCC 或 Sent `APPEND`。除精确标记已读外，
+不提供移动、删除、归档、星标或其他远端 IMAP 写入。
+部署与真实账号验收见 [`QQ_MAIL_SETUP.md`](QQ_MAIL_SETUP.md)，完整字段见
+[`api/qq-mail.md`](api/qq-mail.md)。
+
 ## 版本与更新
 
 管理员打开系统设置时可以查询当前安装版本与 GitHub 最新 Release：
@@ -649,15 +763,15 @@ Workers Builds 根据分支变更重新部署。
 ## 完整接口目录与覆盖检查
 
 登录 Webmail 后打开 `/settings/api` 可以查看当前版本的完整接口目录。该页面按模块
-列出 Worker 暴露的全部 102 个 HTTP 端点；每个端点都包含认证要求、请求参数、成功
+列出 Worker 暴露的全部 145 个 HTTP 端点；每个端点都包含认证要求、请求参数、成功
 响应、限制说明和按当前实例地址生成的 cURL 示例，并支持按方法、路径、用途和字段搜索。
 
 仓库内的 [完整 Markdown API 参考](api/README.md) 使用同一个 Catalog 数据源，按以下
-9 个分类拆分：系统与公开入口、认证与账户、域名与邮箱地址、邮件、草稿与附件、
-iCloud 隐藏邮箱、管理员运营与邮件、管理员用户与访问、管理员设置与备份。离线阅读、
+13 个分类拆分：系统与公开入口、认证与账户、域名与邮箱地址、邮件、草稿与附件、
+iCloud 隐藏邮箱、Gmail 聚合收件箱、Microsoft 邮箱、QQ 邮箱、Linux DO 邮箱、管理员运营与邮件、管理员用户与访问、管理员设置与备份。离线阅读、
 代码审查或生成外部知识库时应从该索引进入。
 
-修改 `src/lib/apiCatalog*.ts` 后运行：
+修改 `src/features/api-guide/model/apiCatalog*.ts` 后运行：
 
 ```bash
 npm run docs:api
@@ -665,7 +779,7 @@ npm run docs:api
 
 生成器会重建 `docs/api/*.md`，请不要直接编辑生成文件。
 
-测试 `src/lib/apiCatalog.test.ts` 会直接从 `api.ts`、扩展授权路由及各子路由文件提取
+测试 `src/features/api-guide/model/apiCatalog.test.ts` 会直接从 `api.ts`、扩展授权路由及各子路由文件提取
 真实端点，与页面目录及 Markdown 中的隐藏端点标记逐项比较。新增、删除或更改路由而
 未同步 Catalog 或未重新生成文档时，测试都会失败。
 
@@ -705,6 +819,38 @@ npm run docs:api
 | `PATCH/DELETE /api/icloud/aliases/{anonymousId}` | 停用、恢复或删除隐藏地址 |
 | `GET /api/icloud/inbox` | 按需读取 iCloud 最近来信 |
 | `GET /api/icloud/inbox/{uid}` | 通过 IMAP 读取完整正文 |
+| `GET/POST /api/gmail/accounts` | 列出或连接当前用户的 Gmail 账号 |
+| `PATCH/DELETE /api/gmail/accounts/{id}` | 重命名或断开 Gmail 账号 |
+| `PUT /api/gmail/accounts/{id}/app-password` | 验证并更新 Gmail 应用专用密码 |
+| `POST /api/gmail/accounts/{id}/verify` | 验证已保存的 Gmail 凭据 |
+| `POST /api/gmail/accounts/{id}/sync` | 请求受限的异步 Gmail 同步 |
+| `GET /api/gmail/messages` | 搜索多账号 Gmail 元数据索引并游标分页 |
+| `GET /api/gmail/accounts/{accountId}/messages/{messageId}` | 按需获取 Gmail 正文并同步标记已读 |
+| `GET /api/gmail/accounts/{accountId}/messages/{messageId}/attachments/{partId}` | 下载受限大小的 Gmail 附件 |
+| `GET/POST /api/qq-mail/accounts` | 列出或验证并连接当前用户的 QQ 邮箱账号 |
+| `PATCH/DELETE /api/qq-mail/accounts/{id}` | 重命名或断开 QQ 邮箱账号 |
+| `PUT /api/qq-mail/accounts/{id}/authorization-code` | 验证并更新 QQ 邮箱授权码 |
+| `POST /api/qq-mail/accounts/{id}/verify` | 验证已保存的 QQ 邮箱授权码与 IMAP 连接 |
+| `POST /api/qq-mail/accounts/{id}/sync` | 请求受限的异步 QQ 邮箱同步 |
+| `POST /api/qq-mail/accounts/{id}/messages` | 从已连接的 QQ 地址异步发送或回复单收件人邮件 |
+| `GET /api/qq-mail/messages` | 搜索多账号 QQ 邮箱元数据索引并游标分页 |
+| `GET /api/qq-mail/accounts/{accountId}/messages/{messageId}` | 按需获取 QQ 邮箱正文并同步标记已读 |
+| `GET /api/qq-mail/accounts/{accountId}/messages/{messageId}/attachments/{partId}` | 下载受限大小的 QQ 邮箱附件 |
+| `GET /api/microsoft/accounts` | 列出当前用户的脱敏 Microsoft 账号与同步状态 |
+| `POST /api/microsoft/accounts/import` | 独立验证并导入一批结构化 OAuth2 账号；可确认加密保存组合 password |
+| `PATCH/DELETE /api/microsoft/accounts/{id}` | 重命名或断开 Microsoft 账号 |
+| `PUT /api/microsoft/accounts/{id}/credential` | 验证并替换 OAuth2 凭据 |
+| `POST /api/microsoft/accounts/{id}/verify` | 验证已保存的 Microsoft IMAP 凭据与权限 |
+| `POST /api/microsoft/accounts/{id}/sync` | 请求受限的异步 Microsoft INBOX 同步 |
+| `GET /api/microsoft/accounts/{id}/folders` | 读取或受限刷新服务器文件夹列表 |
+| `GET /api/microsoft/messages` | 按账号和文件夹搜索 Microsoft 元数据并分页 |
+| `GET /api/microsoft/accounts/{accountId}/messages/{messageId}` | 按需获取 Microsoft MIME 正文并同步标记已读 |
+| `GET /api/microsoft/accounts/{accountId}/messages/{messageId}/attachments/{partId}` | 下载受限大小的 Microsoft 附件 |
+| `GET/POST/DELETE /api/linux-do-mail/account` | 查询、连接或断开当前用户的 Linux DO Mail 账号 |
+| `POST /api/linux-do-mail/account/verify` | 重新验证已保存的 Linux DO Mail 凭据 |
+| `PUT /api/linux-do-mail/account/credential` | 验证并替换 Linux DO Mail 密码或认证令牌 |
+| `GET /api/linux-do-mail/inbox` | 按需只读获取 Linux DO Mail 最近来信 |
+| `GET /api/linux-do-mail/inbox/{uid}` | 通过 IMAP UID 只读获取邮件正文 |
 | `GET /api/admin/statistics` | 管理员邮件统计 |
 | `GET /api/admin/messages` | 主管理员查询和筛选全站邮件 |
 | `GET /api/admin/messages/{id}` | 主管理员读取任意用户邮件正文 |
